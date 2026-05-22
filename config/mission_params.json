@@ -1,0 +1,17 @@
+{
+  "default_altitude": 10,
+  "default_airspeed": 5,
+  "takeoff_altitude": 10,
+  "waypoint_acceptance_radius": 2,
+  "rtl_altitude": 15,
+  "geofence_radius": 200,
+  "battery_failsafe_percent": 20,
+  "formation_spacing": 10,
+  "target_color_lower": [40, 50, 50],
+  "target_color_upper": [80, 255, 255],
+  "sitl_instances": [
+    {"id": 0, "port": 14550},
+    {"id": 1, "port": 14560},
+    {"id": 2, "port": 14570}
+  ]
+}

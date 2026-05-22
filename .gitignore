@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.so
+.env
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.DS_Store
+*.log
+*.mavlink
+sitl_instance/
+*.bin
+*.tlog
