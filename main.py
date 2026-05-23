@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""
+AutonomAir — Main Entry Point
+
+Connects to ArduPilot SITL and presents a CLI menu to run
+each module independently or as a full mission sequence.
+"""
+
+import json
+import os
+import sys
+import time
+
+# ------------------------------------------------------------------ #
+#  Config loader                                                       #
+# ------------------------------------------------------------------ #
+
+def load_config():
+    path = os.path.join(os.path.dirname(__file__), "config", "mission_params.json")
+    with open(path) as f:
+        return json.load(f)
+
+
+# ------------------------------------------------------------------ #
+#  SITL + Vehicle connection                                           #
+# ------------------------------------------------------------------ #
+
+def start_sitl():
+    from dronekit_sitl import SITL
+    print("[Main] Starting SITL simulator...")
+    sitl = SITL()
+    sitl.download("copter", "3.3", verbose=False)
+    sitl.launch({"speedup": "1"}, await_ready=True, restart=True)
+    print(f"[Main] SITL running at {sitl.connection_string()}")
+    return sitl
+
+
+def connect_vehicle(conn_str):
+    from dronekit import connect
+    print(f"[Main] Connecting to vehicle at {conn_str}...")
+    vehicle = connect(conn_str, wait_ready=True)
+    print(f"[Main] Connected. Mode: {vehicle.mode.name}")
+    return vehicle
+
+
+# ------------------------------------------------------------------ #
+#  Module runners                                                      #
+# ------------------------------------------------------------------ #
+
+def run_takeoff_land(vehicle, config):
+    from core.safety_monitor import SafetyMonitor
+    from core.takeoff_land import TakeoffLand
+
+    monitor = SafetyMonitor(vehicle, config)
+    monitor.start()
+
+    tl = TakeoffLand(vehicle, config)
+    try:
+        tl.arm_and_takeoff()
+        tl.hover(duration=5)
+        tl.land()
+    finally:
+        monitor.stop()
+
+
+def run_waypoint_mission(vehicle, config):
+    from core.safety_monitor import SafetyMonitor
+    from core.takeoff_land import TakeoffLand
+    from core.waypoint_mission import WaypointMission
+
+    monitor = SafetyMonitor(vehicle, config)
+    monitor.start()
+
+    tl = TakeoffLand(vehicle, config)
+    wm = WaypointMission(vehicle, config)
+
+    waypoints = [
+        {"lat": -35.3633245, "lon": 149.1652373, "alt": 10},
+        {"lat": -35.3629641, "lon": 149.1644025, "alt": 15},
+        {"lat": -35.3624967, "lon": 149.1650177, "alt": 10},
+        {"lat": -35.3628731, "lon": 149.1658758, "alt": 12},
+    ]
+
+    try:
+        tl.arm_and_takeoff()
+        wm.build_mission(waypoints)
+        wm.execute()
+    finally:
+        monitor.stop()
+
+
+def run_precision_land(vehicle, config):
+    from core.safety_monitor import SafetyMonitor
+    from core.takeoff_land import TakeoffLand
+    from vision.target_detector import TargetDetector
+    from vision.precision_land import PrecisionLand
+
+    monitor = SafetyMonitor(vehicle, config)
+    monitor.start()
+
+    tl = TakeoffLand(vehicle, config)
+    detector = TargetDetector(config)
+    pl = PrecisionLand(vehicle, detector, config)
+
+    try:
+        tl.arm_and_takeoff(target_altitude=15)
+        pl.run(camera_index=0, max_duration=120)
+    finally:
+        monitor.stop()
+
+
+def run_swarm(config):
+    from swarm.swarm_coordinator import SwarmCoordinator
+
+    print("\n[Main] NOTE: Make sure 3 SITL instances are running on ports 14550, 14560, 14570")
+    print("       Run: sim_vehicle.py -I0 --out udp:127.0.0.1:14550")
+    print("            sim_vehicle.py -I1 --out udp:127.0.0.1:14560")
+    print("            sim_vehicle.py -I2 --out udp:127.0.0.1:14570\n")
+
+    input("Press Enter when all 3 instances are running...")
+
+    swarm = SwarmCoordinator(config)
+    swarm.connect_all()
+
+    try:
+        swarm.arm_all()
+        swarm.takeoff_all(altitude=10)
+        time.sleep(3)
+
+        for formation in ["line", "triangle", "v_shape", "circle"]:
+            print(f"\n[Main] Flying {formation} formation for 15 seconds...")
+            swarm.fly_formation(formation, duration=15)
+            swarm.print_status()
+
+        swarm.rtl_all()
+        time.sleep(10)
+
+    finally:
+        swarm.disconnect_all()
+
+
+def run_dashboard(vehicle, config):
+    from dashboard.app import create_app
+
+    app, socketio, stream = create_app(vehicle=vehicle, config=config)
+    print("\n[Main] Dashboard running at http://localhost:5000")
+    print("       Open in your browser to see live telemetry.\n")
+    socketio.run(app, host="0.0.0.0", port=5000)
+
+
+def run_full_mission(vehicle, config):
+    """
+    Full demonstration sequence — runs all modules back to back.
+    Best for portfolio demo recording.
+    """
+    from core.safety_monitor import SafetyMonitor
+    from core.takeoff_land import TakeoffLand
+    from core.waypoint_mission import WaypointMission
+
+    print("\n[Main] === FULL MISSION SEQUENCE ===\n")
+
+    monitor = SafetyMonitor(vehicle, config)
+    monitor.start()
+
+    tl = TakeoffLand(vehicle, config)
+    wm = WaypointMission(vehicle, config)
+
+    waypoints = [
+        {"lat": -35.3633245, "lon": 149.1652373, "alt": 10},
+        {"lat": -35.3629641, "lon": 149.1644025, "alt": 15},
+        {"lat": -35.3624967, "lon": 149.1650177, "alt": 10},
+    ]
+
+    try:
+        print("--- Phase 1: Takeoff ---")
+        tl.arm_and_takeoff()
+        tl.hover(duration=3)
+
+        print("\n--- Phase 2: Waypoint Mission ---")
+        wm.build_mission(waypoints)
+        wm.execute()
+
+        print("\n--- Phase 3: RTL ---")
+        tl.return_to_launch()
+        time.sleep(15)
+
+        print("\n--- Full mission complete ---")
+
+    except KeyboardInterrupt:
+        print("\n[Main] Interrupted — landing.")
+        tl.land()
+
+    finally:
+        monitor.stop()
+
+
+# ------------------------------------------------------------------ #
+#  CLI Menu                                                            #
+# ------------------------------------------------------------------ #
+
+MENU = """
+╔══════════════════════════════════════╗
+║         AutonomAir  Mission CLI      ║
+╠══════════════════════════════════════╣
+║  1. Takeoff, Hover & Land            ║
+║  2. Waypoint Mission                 ║
+║  3. Precision Landing (Vision)       ║
+║  4. Swarm Formation Flight           ║
+║  5. Live Telemetry Dashboard         ║
+║  6. Full Mission Sequence            ║
+║  7. Run Tests                        ║
+║  0. Exit                             ║
+╚══════════════════════════════════════╝
+"""
+
+
+def main():
+    config = load_config()
+
+    print(MENU)
+
+    # Start SITL automatically for single-drone modes
+    sitl   = start_sitl()
+    vehicle = connect_vehicle(sitl.connection_string())
+
+    try:
+        while True:
+            print(MENU)
+            choice = input("Select option: ").strip()
+
+            if choice == "1":
+                run_takeoff_land(vehicle, config)
+
+            elif choice == "2":
+                run_waypoint_mission(vehicle, config)
+
+            elif choice == "3":
+                run_precision_land(vehicle, config)
+
+            elif choice == "4":
+                vehicle.close()
+                sitl.stop()
+                run_swarm(config)
+                break
+
+            elif choice == "5":
+                run_dashboard(vehicle, config)
+
+            elif choice == "6":
+                run_full_mission(vehicle, config)
+
+            elif choice == "7":
+                print("[Main] Running tests...")
+                os.system("python -m pytest tests/sitl_tests.py -v")
+
+            elif choice == "0":
+                print("[Main] Exiting.")
+                break
+
+            else:
+                print("[Main] Invalid option.")
+
+    except KeyboardInterrupt:
+        print("\n[Main] Shutting down...")
+
+    finally:
+        try:
+            vehicle.close()
+            sitl.stop()
+            print("[Main] Cleanup complete.")
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()
