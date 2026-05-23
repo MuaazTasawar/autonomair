@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AutonomAir Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css"/>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: 'Segoe UI', monospace;
+      font-size: 14px;
+    }
+
+    header {
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    header h1 {
+      font-size: 18px;
+      color: #58a6ff;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    #connection-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    #status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #f85149;
+      transition: background 0.3s;
+    }
+
+    #status-dot.connected { background: #3fb950; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-rows: auto auto;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .card h2 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #8b949e;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #21262d;
+      padding-bottom: 8px;
+    }
+
+    /* Telemetry values */
+    .telem-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .telem-item label {
+      display: block;
+      font-size: 10px;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .telem-item span {
+      font-size: 22px;
+      font-weight: 600;
+      color: #58a6ff;
+      font-family: monospace;
+    }
+
+    .telem-item span.warn { color: #d29922; }
+    .telem-item span.danger { color: #f85149; }
+    .telem-item span.ok { color: #3fb950; }
+
+    /* Battery bar */
+    .battery-wrap {
+      margin-top: 8px;
+    }
+
+    .battery-bar {
+      height: 8px;
+      background: #21262d;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+
+    .battery-fill {
+      height: 100%;
+      background: #3fb950;
+      transition: width 0.5s, background 0.5s;
+      border-radius: 4px;
+    }
+
+    /* Map */
+    #map {
+      height: 260px;
+      border-radius: 6px;
+      border: 1px solid #30363d;
+    }
+
+    /* Attitude indicator (canvas) */
+    #attitude-canvas {
+      display: block;
+      margin: 0 auto;
+    }
+
+    /* Mode badge */
+    #mode-badge {
+      display: inline-block;
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      background: #1f6feb33;
+      color: #58a6ff;
+      border: 1px solid #1f6feb;
+      margin-bottom: 10px;
+    }
+
+    /* Commands */
+    .cmd-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .cmd-btn {
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: opacity 0.2s;
+    }
+
+    .cmd-btn:hover { opacity: 0.8; }
+    .cmd-btn.rtl     { background: #1f6feb; color: #fff; }
+    .cmd-btn.land    { background: #3fb950; color: #0d1117; }
+    .cmd-btn.arm     { background: #d29922; color: #0d1117; }
+    .cmd-btn.disarm  { background: #f85149; color: #fff; }
+
+    /* GPS info */
+    .gps-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px solid #21262d;
+      font-size: 12px;
+    }
+
+    .gps-row:last-child { border-bottom: none; }
+    .gps-row span:first-child { color: #8b949e; }
+
+    /* Log */
+    #log {
+      height: 120px;
+      overflow-y: auto;
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 4px;
+      padding: 8px;
+      font-size: 11px;
+      font-family: monospace;
+      margin-top: 8px;
+    }
+
+    .log-entry { padding: 2px 0; border-bottom: 1px solid #161b22; }
+    .log-entry.info  { color: #58a6ff; }
+    .log-entry.warn  { color: #d29922; }
+    .log-entry.good  { color: #3fb950; }
+
+    /* Span full width */
+    .span-2 { grid-column: span 2; }
+    .span-3 { grid-column: span 3; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>✦ AutonomAir</h1>
+  <div id="connection-status">
+    <div id="status-dot"></div>
+    <span id="status-text">Disconnected</span>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- Card 1: Flight data -->
+  <div class="card">
+    <h2>Flight Data</h2>
+    <div id="mode-badge">UNKNOWN</div>
+    <div class="telem-grid">
+      <div class="telem-item">
+        <label>Altitude (m)</label>
+        <span id="alt">—</span>
+      </div>
+      <div class="telem-item">
+        <label>Heading (°)</label>
+        <span id="heading">—</span>
+      </div>
+      <div class="telem-item">
+        <label>Groundspeed</label>
+        <span id="groundspeed">—</span>
+      </div>
+      <div class="telem-item">
+        <label>Airspeed</label>
+        <span id="airspeed">—</span>
+      </div>
+      <div class="telem-item">
+        <label>Armed</label>
+        <span id="armed">—</span>
+      </div>
+      <div class="telem-item">
+        <label>EKF</label>
+        <span id="ekf">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 2: Attitude -->
+  <div class="card">
+    <h2>Attitude Indicator</h2>
+    <canvas id="attitude-canvas" width="180" height="180"></canvas>
+  </div>
+
+  <!-- Card 3: Battery & Power -->
+  <div class="card">
+    <h2>Power</h2>
+    <div class="telem-item">
+      <label>Battery Level</label>
+      <span id="battery-pct">—</span>
+    </div>
+    <div class="battery-wrap">
+      <div class="battery-bar">
+        <div class="battery-fill" id="battery-fill" style="width:0%"></div>
+      </div>
+    </div>
+    <br/>
+    <div class="telem-item">
+      <label>Voltage (V)</label>
+      <span id="battery-v">—</span>
+    </div>
+    <br/>
+    <h2>Commands</h2>
+    <div class="cmd-grid">
+      <button class="cmd-btn rtl"    onclick="sendCmd('rtl')">RTL</button>
+      <button class="cmd-btn land"   onclick="sendCmd('land')">Land</button>
+      <button class="cmd-btn arm"    onclick="sendCmd('arm')">Arm</button>
+      <button class="cmd-btn disarm" onclick="sendCmd('disarm')">Disarm</button>
+    </div>
+  </div>
+
+  <!-- Card 4: Map (spans 2 cols) -->
+  <div class="card span-2">
+    <h2>Live Position</h2>
+    <div id="map"></div>
+  </div>
+
+  <!-- Card 5: GPS -->
+  <div class="card">
+    <h2>GPS</h2>
+    <div class="gps-row"><span>Latitude</span>  <span id="lat">—</span></div>
+    <div class="gps-row"><span>Longitude</span> <span id="lon">—</span></div>
+    <div class="gps-row"><span>Fix Type</span>  <span id="gps-fix">—</span></div>
+    <div class="gps-row"><span>Satellites</span><span id="satellites">—</span></div>
+    <div class="gps-row"><span>Roll</span>      <span id="roll">—</span></div>
+    <div class="gps-row"><span>Pitch</span>     <span id="pitch">—</span></div>
+    <div class="gps-row"><span>Yaw</span>       <span id="yaw">—</span></div>
+    <br/>
+    <h2>Event Log</h2>
+    <div id="log"></div>
+  </div>
+
+</div>
+
+<script>
+  // ------------------------------------------------------------------ //
+  //  Map setup                                                           //
+  // ------------------------------------------------------------------ //
+  const map = L.map('map').setView([0, 0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  const droneIcon = L.divIcon({
+    className: '',
+    html: '<div style="width:14px;height:14px;background:#58a6ff;border:2px solid #fff;border-radius:50%;box-shadow:0 0 6px #58a6ff"></div>',
+    iconSize: [14, 14],
+    iconAnchor: [7, 7]
+  });
+
+  let droneMarker = null;
+  let flightPath = [];
+  let pathLine = null;
+
+  function updateMap(lat, lon) {
+    if (!lat || !lon) return;
+    const pos = [lat, lon];
+
+    if (!droneMarker) {
+      droneMarker = L.marker(pos, { icon: droneIcon }).addTo(map);
+      map.setView(pos, 17);
+    } else {
+      droneMarker.setLatLng(pos);
+    }
+
+    flightPath.push(pos);
+    if (flightPath.length > 200) flightPath.shift();
+
+    if (pathLine) map.removeLayer(pathLine);
+    pathLine = L.polyline(flightPath, {
+      color: '#58a6ff', weight: 2, opacity: 0.6
+    }).addTo(map);
+  }
+
+  // ------------------------------------------------------------------ //
+  //  Attitude indicator canvas                                           //
+  // ------------------------------------------------------------------ //
+  const canvas  = document.getElementById('attitude-canvas');
+  const ctx     = canvas.getContext('2d');
+  const CX      = canvas.width  / 2;
+  const CY      = canvas.height / 2;
+  const RADIUS  = 80;
+
+  function drawAttitude(roll, pitch) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(CX, CY, RADIUS, 0, Math.PI * 2);
+    ctx.clip();
+
+    // Rotate by roll
+    ctx.translate(CX, CY);
+    ctx.rotate(roll * Math.PI / 180);
+
+    // Pitch offset (pixels per degree)
+    const pitchOffset = pitch * 2;
+
+    // Sky
+    ctx.fillStyle = '#1f4068';
+    ctx.fillRect(-RADIUS, -RADIUS - pitchOffset, RADIUS * 2, RADIUS);
+
+    // Ground
+    ctx.fillStyle = '#6b3a1f';
+    ctx.fillRect(-RADIUS, -pitchOffset, RADIUS * 2, RADIUS);
+
+    // Horizon line
+    ctx.strokeStyle = '#ffffff88';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-RADIUS, -pitchOffset);
+    ctx.lineTo(RADIUS,  -pitchOffset);
+    ctx.stroke();
+
+    // Pitch ladder lines
+    ctx.strokeStyle = '#ffffff55';
+    ctx.lineWidth = 0.5;
+    for (let deg = -30; deg <= 30; deg += 10) {
+      if (deg === 0) continue;
+      const y = -pitchOffset - deg * 2;
+      const w = deg % 20 === 0 ? 30 : 18;
+      ctx.beginPath();
+      ctx.moveTo(-w, y);
+      ctx.lineTo(w,  y);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+
+    // Outer ring
+    ctx.beginPath();
+    ctx.arc(CX, CY, RADIUS, 0, Math.PI * 2);
+    ctx.strokeStyle = '#30363d';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Fixed aircraft symbol
+    ctx.strokeStyle = '#f0c040';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(CX - 30, CY); ctx.lineTo(CX - 10, CY);
+    ctx.moveTo(CX + 10, CY); ctx.lineTo(CX + 30, CY);
+    ctx.moveTo(CX, CY - 8);  ctx.lineTo(CX, CY + 8);
+    ctx.stroke();
+  }
+
+  drawAttitude(0, 0);
+
+  // ------------------------------------------------------------------ //
+  //  Socket.IO                                                           //
+  // ------------------------------------------------------------------ //
+  const socket = io();
+
+  socket.on('connect', () => {
+    document.getElementById('status-dot').classList.add('connected');
+    document.getElementById('status-text').textContent = 'Connected';
+    addLog('Socket connected', 'good');
+  });
+
+  socket.on('disconnect', () => {
+    document.getElementById('status-dot').classList.remove('connected');
+    document.getElementById('status-text').textContent = 'Disconnected';
+    addLog('Socket disconnected', 'warn');
+  });
+
+  socket.on('telemetry', (d) => {
+    // Flight data
+    setText('alt',         d.alt.toFixed(1));
+    setText('heading',     d.heading + '°');
+    setText('groundspeed', d.groundspeed.toFixed(1) + ' m/s');
+    setText('airspeed',    d.airspeed.toFixed(1) + ' m/s');
+    setText('roll',        d.roll.toFixed(1) + '°');
+    setText('pitch',       d.pitch.toFixed(1) + '°');
+    setText('yaw',         d.yaw.toFixed(1) + '°');
+
+    // Armed & EKF status
+    const armedEl = document.getElementById('armed');
+    armedEl.textContent = d.armed ? 'YES' : 'NO';
+    armedEl.className   = d.armed ? 'ok' : '';
+
+    const ekfEl = document.getElementById('ekf');
+    ekfEl.textContent = d.ekf_ok ? 'OK' : 'FAIL';
+    ekfEl.className   = d.ekf_ok ? 'ok' : 'danger';
+
+    // Mode badge
+    document.getElementById('mode-badge').textContent = d.mode;
+
+    // Battery
+    const pct = d.battery_level;
+    setText('battery-pct', pct + '%');
+    setText('battery-v',   d.battery_voltage + 'V');
+    const fill = document.getElementById('battery-fill');
+    fill.style.width = pct + '%';
+    fill.style.background = pct > 50 ? '#3fb950' : pct > 20 ? '#d29922' : '#f85149';
+
+    // GPS
+    setText('lat',        d.lat);
+    setText('lon',        d.lon);
+    setText('gps-fix',    ['No fix','No fix','2D','3D','3D-DGPS','RTK'][d.gps_fix] || d.gps_fix);
+    setText('satellites', d.satellites);
+
+    // Attitude
+    drawAttitude(d.roll, d.pitch);
+
+    // Map
+    updateMap(d.lat, d.lon);
+  });
+
+  // ------------------------------------------------------------------ //
+  //  Commands                                                            //
+  // ------------------------------------------------------------------ //
+  function sendCmd(action) {
+    socket.emit('command', { action });
+    addLog(`Command sent: ${action.toUpperCase()}`, 'info');
+  }
+
+  // ------------------------------------------------------------------ //
+  //  Utilities                                                           //
+  // ------------------------------------------------------------------ //
+  function setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
+  function addLog(msg, type = 'info') {
+    const log = document.getElementById('log');
+    const ts  = new Date().toLocaleTimeString();
+    const div = document.createElement('div');
+    div.className = `log-entry ${type}`;
+    div.textContent = `[${ts}] ${msg}`;
+    log.prepend(div);
+    if (log.children.length > 50) log.removeChild(log.lastChild);
+  }
+</script>
+</body>
+</html>
