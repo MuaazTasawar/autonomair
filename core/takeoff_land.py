@@ -36,12 +36,27 @@ class TakeoffLand:
 
     def land(self):
         print("[TakeoffLand] Initiating landing...")
+        # Send LAND mode directly via MAVLink — same fix as GUIDED
+        # ArduCopter LAND = mode 9
+        from pymavlink import mavutil
+        self.vehicle._master.mav.set_mode_send(
+            self.vehicle._master.target_system,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            9
+        )
         self.vehicle.mode = VehicleMode("LAND")
+        time.sleep(1)
         self._wait_for_landed()
         print("[TakeoffLand] Landed successfully.")
 
     def return_to_launch(self):
         print("[TakeoffLand] Returning to launch...")
+        from pymavlink import mavutil
+        self.vehicle._master.mav.set_mode_send(
+            self.vehicle._master.target_system,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            6
+        )
         self.vehicle.mode = VehicleMode("RTL")
 
     def hover(self, duration):
