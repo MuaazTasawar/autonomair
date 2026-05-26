@@ -4,7 +4,7 @@
   "takeoff_altitude": 10,
   "waypoint_acceptance_radius": 2,
   "rtl_altitude": 15,
-  "geofence_radius": 200,
+  "geofence_radius": 500,
   "battery_failsafe_percent": 20,
   "formation_spacing": 10,
   "target_color_lower": [40, 50, 50],

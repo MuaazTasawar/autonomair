@@ -18,9 +18,9 @@ class PrecisionLand:
         self.config = config
 
         # PID gains — tune these for your simulation environment
-        self.kp = 0.0002
-        self.ki = 0.000005
-        self.kd = 0.00005
+        self.kp = 0.00005
+        self.ki = 0.000001
+        self.kd = 0.00001
 
         self._integral_x = 0.0
         self._integral_y = 0.0
