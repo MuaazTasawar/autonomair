@@ -1,5 +1,6 @@
 import time
-from dronekit import VehicleMode, connect
+from dronekit import VehicleMode
+from pymavlink import mavutil
 
 
 class TakeoffLand:
@@ -52,10 +53,6 @@ class TakeoffLand:
     # ------------------------------------------------------------------ #
 
     def _disable_prearm_checks(self):
-        """
-        Write ARMING_CHECK=0 repeatedly until it confirms back as 0.
-        DroneKit parameter writes are async — we must verify.
-        """
         for attempt in range(10):
             try:
                 self.vehicle.parameters["ARMING_CHECK"]  = 0
@@ -73,7 +70,6 @@ class TakeoffLand:
         print("  Warning: could not confirm ARMING_CHECK=0, proceeding anyway.")
 
     def _wait_for_armable(self):
-        """Wait until is_armable is True."""
         timeout, start = 60, time.time()
         while not self.vehicle.is_armable:
             elapsed = int(time.time() - start)
@@ -88,35 +84,38 @@ class TakeoffLand:
 
     def _set_guided(self):
         """
-        Switch to GUIDED mode. Retries every 2s.
-        ArduPilot only allows GUIDED when fully initialised.
+        Send GUIDED mode change directly via MAVLink SET_MODE.
+        ArduCopter GUIDED = mode 4.
+        DroneKit's vehicle.mode setter is unreliable on TCP connections.
         """
+        GUIDED_MODE_NUM = 4
+
         timeout, start = 30, time.time()
         while True:
+            # Method 1: direct MAVLink set_mode_send
+            self.vehicle._master.mav.set_mode_send(
+                self.vehicle._master.target_system,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                GUIDED_MODE_NUM
+            )
+
+            # Method 2: also try DroneKit setter as backup
             self.vehicle.mode = VehicleMode("GUIDED")
+
             time.sleep(2)
             mode = self.vehicle.mode.name
             print(f"  Current mode: {mode}")
+
             if mode == "GUIDED":
                 print("  GUIDED confirmed.")
                 return
+
             if time.time() - start > timeout:
-                # Last resort — try LOITER then GUIDED
-                print("  Trying LOITER -> GUIDED switch...")
-                self.vehicle.mode = VehicleMode("LOITER")
-                time.sleep(2)
-                self.vehicle.mode = VehicleMode("GUIDED")
-                time.sleep(2)
-                if self.vehicle.mode.name == "GUIDED":
-                    print("  GUIDED confirmed via LOITER.")
-                    return
                 raise TimeoutError(
-                    f"[TakeoffLand] Cannot enter GUIDED. "
-                    f"Mode stuck at: {self.vehicle.mode.name}\n"
-                    f"  is_armable={self.vehicle.is_armable} "
-                    f"gps={self.vehicle.gps_0.fix_type if self.vehicle.gps_0 else 0}"
+                    f"[TakeoffLand] Cannot enter GUIDED after 30s. "
+                    f"Stuck at: {mode}"
                 )
-            print(f"  Mode is {mode}, retrying GUIDED...")
+            print(f"  Retrying GUIDED...")
 
     def _arm_motors(self):
         self.vehicle.armed = True
