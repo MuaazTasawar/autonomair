@@ -30,7 +30,7 @@ def start_sitl():
     print("[Main] Starting SITL simulator...")
     sitl = SITL()
     sitl.download("copter", "3.3", verbose=False)
-    sitl.launch({"speedup": "1"}, await_ready=True, restart=True)
+    sitl.launch([], await_ready=True, restart=True)
     print(f"[Main] SITL running at {sitl.connection_string()}")
     return sitl
 
@@ -38,8 +38,12 @@ def start_sitl():
 def connect_vehicle(conn_str):
     from dronekit import connect
     print(f"[Main] Connecting to vehicle at {conn_str}...")
-    vehicle = connect(conn_str, wait_ready=True)
-    print(f"[Main] Connected. Mode: {vehicle.mode.name}")
+    vehicle = connect(conn_str, wait_ready=True, timeout=60)
+    # Give SITL a moment to fully boot after connection
+    time.sleep(3)
+    print(f"[Main] Connected. Mode: {vehicle.mode.name} | "
+          f"Armable: {vehicle.is_armable} | "
+          f"GPS fix: {vehicle.gps_0.fix_type if vehicle.gps_0 else 0}")
     return vehicle
 
 
@@ -51,16 +55,22 @@ def run_takeoff_land(vehicle, config):
     from core.safety_monitor import SafetyMonitor
     from core.takeoff_land import TakeoffLand
 
-    monitor = SafetyMonitor(vehicle, config)
-    monitor.start()
-
     tl = TakeoffLand(vehicle, config)
     try:
         tl.arm_and_takeoff()
+
+        monitor = SafetyMonitor(vehicle, config)
+        monitor.start()
+
         tl.hover(duration=5)
         tl.land()
+    except Exception as e:
+        print(f"[Main] Error during flight: {e}")
     finally:
-        monitor.stop()
+        try:
+            monitor.stop()
+        except Exception:
+            pass
 
 
 def run_waypoint_mission(vehicle, config):

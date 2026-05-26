@@ -1,6 +1,6 @@
 import time
 import threading
-from pymavlink import mavutil
+import math
 
 
 class SafetyMonitor:
@@ -21,14 +21,12 @@ class SafetyMonitor:
     # ------------------------------------------------------------------ #
 
     def start(self):
-        """Start the background monitoring thread."""
         self._running = True
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._thread.start()
         print("[SafetyMonitor] Started.")
 
     def stop(self):
-        """Stop the monitoring thread cleanly."""
         self._running = False
         if self._thread:
             self._thread.join(timeout=2)
@@ -40,9 +38,12 @@ class SafetyMonitor:
 
     def _monitor_loop(self):
         while self._running:
-            self._check_battery()
-            self._check_geofence()
-            self._check_connection()
+            try:
+                self._check_battery()
+                self._check_geofence()
+                self._check_connection()
+            except Exception as e:
+                print(f"[SafetyMonitor] Monitor error: {e}")
             time.sleep(1)
 
     # ------------------------------------------------------------------ #
@@ -52,7 +53,6 @@ class SafetyMonitor:
     def _check_battery(self):
         level = self.vehicle.battery.level
         threshold = self.config.get("battery_failsafe_percent", 20)
-
         if level is not None and level < threshold:
             msg = f"[SafetyMonitor] WARNING: Battery {level}% below threshold {threshold}%"
             print(msg)
@@ -61,29 +61,30 @@ class SafetyMonitor:
 
     def _check_geofence(self):
         home = self.vehicle.home_location
-        loc = self.vehicle.location.global_relative_frame
+        loc  = self.vehicle.location.global_relative_frame
         radius = self.config.get("geofence_radius", 200)
 
-        if home is None or loc is None:
+        if home is None or loc is None or loc.lat is None:
             return
 
-        dist = self._haversine(
-            home.lat, home.lon,
-            loc.lat, loc.lon
-        )
-
+        dist = self._haversine(home.lat, home.lon, loc.lat, loc.lon)
         if dist > radius:
-            msg = f"[SafetyMonitor] WARNING: Geofence breach — {dist:.1f}m from home (limit {radius}m)"
+            msg = (f"[SafetyMonitor] WARNING: Geofence breach — "
+                   f"{dist:.1f}m from home (limit {radius}m)")
             print(msg)
             self.warnings.append(msg)
             self._trigger_rtl("Geofence breach")
 
     def _check_connection(self):
-        if not self.vehicle.last_heartbeat:
+        """
+        vehicle.last_heartbeat is seconds SINCE last heartbeat,
+        not a Unix timestamp.
+        """
+        hb = self.vehicle.last_heartbeat
+        if hb is None:
             return
-        gap = time.time() - self.vehicle.last_heartbeat
-        if gap > 5:
-            msg = f"[SafetyMonitor] WARNING: No heartbeat for {gap:.1f}s"
+        if hb > 5:
+            msg = f"[SafetyMonitor] WARNING: No heartbeat for {hb:.1f}s"
             print(msg)
             self.warnings.append(msg)
 
@@ -92,10 +93,8 @@ class SafetyMonitor:
     # ------------------------------------------------------------------ #
 
     def _trigger_rtl(self, reason):
-        print(f"[SafetyMonitor] Triggering RTL — reason: {reason}")
-        self.vehicle.mode = mavutil.mavlink.MAV_MODE_AUTO_DISARMED
-        # DroneKit friendly RTL trigger
         from dronekit import VehicleMode
+        print(f"[SafetyMonitor] Triggering RTL — reason: {reason}")
         self.vehicle.mode = VehicleMode("RTL")
 
     # ------------------------------------------------------------------ #
@@ -104,11 +103,10 @@ class SafetyMonitor:
 
     @staticmethod
     def _haversine(lat1, lon1, lat2, lon2):
-        """Returns distance in metres between two GPS coordinates."""
-        import math
         R = 6371000
         phi1, phi2 = math.radians(lat1), math.radians(lat2)
-        dphi = math.radians(lat2 - lat1)
+        dphi    = math.radians(lat2 - lat1)
         dlambda = math.radians(lon2 - lon1)
-        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        a = (math.sin(dphi / 2) ** 2
+             + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2)
         return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))

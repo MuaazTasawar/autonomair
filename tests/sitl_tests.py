@@ -23,7 +23,7 @@ class SITLTestBase(unittest.TestCase):
         print("\n[TestBase] Starting SITL instance...")
         cls.sitl = SITL()
         cls.sitl.download("copter", "3.3", verbose=False)
-        cls.sitl.launch({"speedup": "5"}, await_ready=True, restart=True)
+        cls.sitl.launch([], await_ready=True, restart=True)
         conn_str = cls.sitl.connection_string()
         cls.vehicle = connect(conn_str, wait_ready=True)
         cls.config  = load_config()
