@@ -39,7 +39,6 @@ def connect_vehicle(conn_str):
     from dronekit import connect
     print(f"[Main] Connecting to vehicle at {conn_str}...")
     vehicle = connect(conn_str, wait_ready=True, timeout=60)
-    # Give SITL a moment to fully boot after connection
     time.sleep(3)
     print(f"[Main] Connected. Mode: {vehicle.mode.name} | "
           f"Armable: {vehicle.is_armable} | "
@@ -56,6 +55,7 @@ def run_takeoff_land(vehicle, config):
     from core.takeoff_land import TakeoffLand
 
     tl = TakeoffLand(vehicle, config)
+    monitor = None
     try:
         tl.arm_and_takeoff()
 
@@ -67,10 +67,8 @@ def run_takeoff_land(vehicle, config):
     except Exception as e:
         print(f"[Main] Error during flight: {e}")
     finally:
-        try:
+        if monitor:
             monitor.stop()
-        except Exception:
-            pass
 
 
 def run_waypoint_mission(vehicle, config):
@@ -78,25 +76,31 @@ def run_waypoint_mission(vehicle, config):
     from core.takeoff_land import TakeoffLand
     from core.waypoint_mission import WaypointMission
 
-    monitor = SafetyMonitor(vehicle, config)
-    monitor.start()
-
     tl = TakeoffLand(vehicle, config)
-    wm = WaypointMission(vehicle, config)
-
-    waypoints = [
-        {"lat": -35.3633245, "lon": 149.1652373, "alt": 10},
-        {"lat": -35.3629641, "lon": 149.1644025, "alt": 15},
-        {"lat": -35.3624967, "lon": 149.1650177, "alt": 10},
-        {"lat": -35.3628731, "lon": 149.1658758, "alt": 12},
-    ]
-
+    monitor = None
     try:
         tl.arm_and_takeoff()
+
+        monitor = SafetyMonitor(vehicle, config)
+        monitor.start()
+
+        wm = WaypointMission(vehicle, config)
+
+        waypoints = [
+            {"lat": -35.3633245, "lon": 149.1652373, "alt": 10},
+            {"lat": -35.3629641, "lon": 149.1644025, "alt": 15},
+            {"lat": -35.3624967, "lon": 149.1650177, "alt": 10},
+            {"lat": -35.3628731, "lon": 149.1658758, "alt": 12},
+        ]
+
         wm.build_mission(waypoints)
         wm.execute()
+
+    except Exception as e:
+        print(f"[Main] Error during waypoint mission: {e}")
     finally:
-        monitor.stop()
+        if monitor:
+            monitor.stop()
 
 
 def run_precision_land(vehicle, config):
@@ -105,18 +109,23 @@ def run_precision_land(vehicle, config):
     from vision.target_detector import TargetDetector
     from vision.precision_land import PrecisionLand
 
-    monitor = SafetyMonitor(vehicle, config)
-    monitor.start()
-
     tl = TakeoffLand(vehicle, config)
-    detector = TargetDetector(config)
-    pl = PrecisionLand(vehicle, detector, config)
-
+    monitor = None
     try:
         tl.arm_and_takeoff(target_altitude=15)
-        pl.run(camera_index=0, max_duration=120)
+
+        monitor = SafetyMonitor(vehicle, config)
+        monitor.start()
+
+        detector = TargetDetector(config)
+        pl = PrecisionLand(vehicle, detector, config)
+        pl.run(camera_index=0, max_duration=300)
+
+    except Exception as e:
+        print(f"[Main] Error during precision landing: {e}")
     finally:
-        monitor.stop()
+        if monitor:
+            monitor.stop()
 
 
 def run_swarm(config):
@@ -145,6 +154,8 @@ def run_swarm(config):
         swarm.rtl_all()
         time.sleep(10)
 
+    except Exception as e:
+        print(f"[Main] Swarm error: {e}")
     finally:
         swarm.disconnect_all()
 
@@ -169,11 +180,8 @@ def run_full_mission(vehicle, config):
 
     print("\n[Main] === FULL MISSION SEQUENCE ===\n")
 
-    monitor = SafetyMonitor(vehicle, config)
-    monitor.start()
-
     tl = TakeoffLand(vehicle, config)
-    wm = WaypointMission(vehicle, config)
+    monitor = None
 
     waypoints = [
         {"lat": -35.3633245, "lon": 149.1652373, "alt": 10},
@@ -184,9 +192,14 @@ def run_full_mission(vehicle, config):
     try:
         print("--- Phase 1: Takeoff ---")
         tl.arm_and_takeoff()
+
+        monitor = SafetyMonitor(vehicle, config)
+        monitor.start()
+
         tl.hover(duration=3)
 
         print("\n--- Phase 2: Waypoint Mission ---")
+        wm = WaypointMission(vehicle, config)
         wm.build_mission(waypoints)
         wm.execute()
 
@@ -199,9 +212,11 @@ def run_full_mission(vehicle, config):
     except KeyboardInterrupt:
         print("\n[Main] Interrupted — landing.")
         tl.land()
-
+    except Exception as e:
+        print(f"[Main] Error during full mission: {e}")
     finally:
-        monitor.stop()
+        if monitor:
+            monitor.stop()
 
 
 # ------------------------------------------------------------------ #
@@ -227,10 +242,7 @@ MENU = """
 def main():
     config = load_config()
 
-    print(MENU)
-
-    # Start SITL automatically for single-drone modes
-    sitl   = start_sitl()
+    sitl = start_sitl()
     vehicle = connect_vehicle(sitl.connection_string())
 
     try:

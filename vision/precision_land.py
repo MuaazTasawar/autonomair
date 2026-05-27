@@ -34,7 +34,7 @@ class PrecisionLand:
     #  Public API                                                          #
     # ------------------------------------------------------------------ #
 
-    def run(self, camera_index=0, max_duration=60):
+    def run(self, camera_index=0, max_duration=300):
         """
         Main loop: read camera, detect target, correct position.
         Descends gradually once centered, then lands.
@@ -82,7 +82,7 @@ class PrecisionLand:
                       f"error=({error_x:.0f},{error_y:.0f}px) alt={alt:.1f}m")
 
                 # Check if we're centered enough to descend
-                if abs(error_x) < 30 and abs(error_y) < 30:
+                if abs(error_x) < 80 and abs(error_y) < 80:
                     centered_count += 1
                     if centered_count >= 5:
                         print("[PrecisionLand] Centered. Descending...")
@@ -150,21 +150,51 @@ class PrecisionLand:
         return correction_x, correction_y
 
     def _apply_correction(self, correction):
-        """Move the drone by the computed correction offset."""
+        """Move the drone by sending a MAVLink SET_POSITION_TARGET command."""
+        import math
+        from pymavlink import mavutil
+
         north, east = correction
         current = self.vehicle.location.global_relative_frame
 
         new_lat = current.lat + (north / 111320)
         new_lon = current.lon + (east / (111320 * abs(
-            __import__("math").cos(__import__("math").radians(current.lat))
+            math.cos(math.radians(current.lat))
         )))
 
-        target = LocationGlobalRelative(new_lat, new_lon, current.alt)
-        self.vehicle.simple_goto(target)
+        # Send position target via MAVLink directly
+        self.vehicle._master.mav.set_position_target_global_int_send(
+            0,
+            self.vehicle._master.target_system,
+            self.vehicle._master.target_component,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+            0b0000111111111000,  # position only
+            int(new_lat * 1e7),
+            int(new_lon * 1e7),
+            int(current.alt),
+            0, 0, 0,
+            0, 0, 0,
+            0, 0
+        )
 
     def _descend_step(self, current_alt, step=0.5):
-        """Lower altitude by one step while maintaining position."""
+        """Lower altitude by one step via MAVLink."""
+        import math
+        from pymavlink import mavutil
+
         new_alt = max(current_alt - step, 0.5)
         current = self.vehicle.location.global_relative_frame
-        target = LocationGlobalRelative(current.lat, current.lon, new_alt)
-        self.vehicle.simple_goto(target)
+
+        self.vehicle._master.mav.set_position_target_global_int_send(
+            0,
+            self.vehicle._master.target_system,
+            self.vehicle._master.target_component,
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+            0b0000111111111000,
+            int(current.lat * 1e7),
+            int(current.lon * 1e7),
+            int(new_alt),
+            0, 0, 0,
+            0, 0, 0,
+            0, 0
+        )
