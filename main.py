@@ -103,45 +103,40 @@ def run_waypoint_mission(vehicle, config):
             monitor.stop()
 
 
-def run_precision_land(vehicle, config):
-    from core.safety_monitor import SafetyMonitor
-    from core.takeoff_land import TakeoffLand
-    from vision.target_detector import TargetDetector
-    from vision.precision_land import PrecisionLand
-
-    tl = TakeoffLand(vehicle, config)
-    monitor = None
-    try:
-        tl.arm_and_takeoff(target_altitude=15)
-
-        monitor = SafetyMonitor(vehicle, config)
-        monitor.start()
-
-        detector = TargetDetector(config)
-        pl = PrecisionLand(vehicle, detector, config)
-        pl.run(camera_index=0, max_duration=300)
-
-    except Exception as e:
-        print(f"[Main] Error during precision landing: {e}")
-    finally:
-        if monitor:
-            monitor.stop()
-
-
 def run_swarm(config):
+    from dronekit_sitl import SITL
     from swarm.swarm_coordinator import SwarmCoordinator
 
-    print("\n[Main] NOTE: Make sure 3 SITL instances are running on ports 14550, 14560, 14570")
-    print("       Run: sim_vehicle.py -I0 --out udp:127.0.0.1:14550")
-    print("            sim_vehicle.py -I1 --out udp:127.0.0.1:14560")
-    print("            sim_vehicle.py -I2 --out udp:127.0.0.1:14570\n")
+    # Start 3 SITL instances automatically
+    print("\n[Main] Starting 3 SITL instances for swarm...")
+    sitl_instances = []
+    ports = [14550, 14560, 14570]
 
-    input("Press Enter when all 3 instances are running...")
+    for i, port in enumerate(ports):
+        print(f"  Starting SITL instance {i} on port {port}...")
+        sitl = SITL(instance=i)
+        sitl.download("copter", "3.3", verbose=False)
+        sitl.launch([], await_ready=True, restart=True)
+        sitl_instances.append(sitl)
+        print(f"  SITL {i} running at {sitl.connection_string()}")
+        time.sleep(2)
 
-    swarm = SwarmCoordinator(config)
+    time.sleep(5)  # let all instances stabilise
+
+    # Override config ports with actual connection strings
+    config_copy = config.copy()
+    config_copy["sitl_instances"] = [
+        {"id": i, "port": port} for i, port in enumerate(ports)
+    ]
+
+    swarm = SwarmCoordinator(config_copy)
     swarm.connect_all()
 
     try:
+        if not swarm.vehicles:
+            print("[Main] No drones connected — aborting swarm.")
+            return
+
         swarm.arm_all()
         swarm.takeoff_all(altitude=10)
         time.sleep(3)
@@ -158,6 +153,12 @@ def run_swarm(config):
         print(f"[Main] Swarm error: {e}")
     finally:
         swarm.disconnect_all()
+        for sitl in sitl_instances:
+            try:
+                sitl.stop()
+            except Exception:
+                pass
+        print("[Main] All SITL instances stopped.")
 
 
 def run_dashboard(vehicle, config):

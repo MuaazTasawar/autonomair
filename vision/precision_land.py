@@ -94,7 +94,9 @@ class PrecisionLand:
                     self._apply_correction(correction)
 
                 # Land when close enough to the ground
-                if alt < 1.0:
+                # Land when close enough to the ground
+                # Only trigger if we actually took off (alt was > 5m at some point)
+                if alt < 1.0 and elapsed > 10:
                     print("[PrecisionLand] Close to ground — executing final LAND.")
                     break
 
