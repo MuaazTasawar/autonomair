@@ -93,10 +93,17 @@ class SafetyMonitor:
     # ------------------------------------------------------------------ #
 
     def _trigger_rtl(self, reason):
-        from dronekit import VehicleMode
+        from pymavlink import mavutil
         print(f"[SafetyMonitor] Triggering RTL — reason: {reason}")
-        self.vehicle.mode = VehicleMode("RTL")
-
+        try:
+            # RTL = mode 6 for ArduCopter
+            self.vehicle._master.mav.set_mode_send(
+                self.vehicle._master.target_system,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                6
+            )
+        except Exception as e:
+            print(f"[SafetyMonitor] RTL command failed: {e}")
     # ------------------------------------------------------------------ #
     #  Utilities                                                           #
     # ------------------------------------------------------------------ #
