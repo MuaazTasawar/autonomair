@@ -6,26 +6,13 @@ from .telemetry_stream import TelemetryStream
 
 
 def create_app(vehicle=None, config=None):
-    """
-    Factory function that creates and returns the Flask app and SocketIO instance.
-
-    Args:
-        vehicle : DroneKit vehicle object (can be None for UI-only testing)
-        config  : mission config dict
-
-    Returns:
-        (app, socketio, stream) tuple
-    """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     app = Flask(__name__, template_folder=os.path.join(base_dir, "templates"))
     app.config["SECRET_KEY"] = "autonomair_secret"
 
-    socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+    # Use gevent instead of eventlet — eventlet breaks on Python 3.13
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
     stream = TelemetryStream(vehicle, socketio) if vehicle else None
-
-    # ------------------------------------------------------------------ #
-    #  Routes                                                              #
-    # ------------------------------------------------------------------ #
 
     @app.route("/")
     def index():
@@ -45,10 +32,6 @@ def create_app(vehicle=None, config=None):
             "streaming": stream._running if stream else False,
         })
 
-    # ------------------------------------------------------------------ #
-    #  Socket.IO events                                                    #
-    # ------------------------------------------------------------------ #
-
     @socketio.on("connect")
     def on_connect():
         print("[Dashboard] Client connected.")
@@ -61,29 +44,24 @@ def create_app(vehicle=None, config=None):
 
     @socketio.on("command")
     def on_command(data):
-        """
-        Accept simple commands from the dashboard UI.
-        Payload: { "action": "rtl" | "land" | "arm" | "disarm" }
-        """
         if not vehicle:
             return
-
         from dronekit import VehicleMode
+        from pymavlink import mavutil
         action = data.get("action", "")
-
-        if action == "rtl":
-            vehicle.mode = VehicleMode("RTL")
-            print("[Dashboard] Command: RTL")
-        elif action == "land":
-            vehicle.mode = VehicleMode("LAND")
-            print("[Dashboard] Command: LAND")
+        mode_map = {"rtl": 6, "land": 9}
+        if action in mode_map:
+            vehicle._master.mav.set_mode_send(
+                vehicle._master.target_system,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                mode_map[action]
+            )
+            print(f"[Dashboard] Command: {action.upper()}")
         elif action == "arm":
             vehicle.armed = True
             print("[Dashboard] Command: ARM")
         elif action == "disarm":
             vehicle.armed = False
             print("[Dashboard] Command: DISARM")
-        else:
-            print(f"[Dashboard] Unknown command: {action}")
 
     return app, socketio, stream

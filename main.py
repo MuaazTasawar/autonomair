@@ -75,21 +75,20 @@ def run_waypoint_mission(vehicle, config):
     tl = TakeoffLand(vehicle, config)
     monitor = None
     try:
-        # Must take off before uploading mission
+        # Takeoff FIRST — no monitor yet
         tl.arm_and_takeoff()
 
+        # Start monitor only after airborne
         monitor = SafetyMonitor(vehicle, config)
         monitor.start()
 
         wm = WaypointMission(vehicle, config)
-
         waypoints = [
             {"lat": -35.3633245, "lon": 149.1652373, "alt": 10},
             {"lat": -35.3629641, "lon": 149.1644025, "alt": 15},
             {"lat": -35.3624967, "lon": 149.1650177, "alt": 10},
             {"lat": -35.3628731, "lon": 149.1658758, "alt": 12},
         ]
-
         wm.build_mission(waypoints)
         wm.execute()
 
@@ -98,7 +97,6 @@ def run_waypoint_mission(vehicle, config):
     finally:
         if monitor:
             monitor.stop()
-
 
 def run_precision_land(vehicle, config):
     from core.safety_monitor import SafetyMonitor
@@ -142,26 +140,36 @@ def run_swarm(config):
 
     print("\n[Main] Starting 3 SITL instances for swarm...")
     sitl_instances = []
-    ports = [14550, 14560, 14570]
+    connection_strings = []
 
-    for i, port in enumerate(ports):
-        print(f"  Starting SITL instance {i} on port {port}...")
+    for i in range(3):
+        print(f"  Starting SITL instance {i}...")
         sitl = SITL(instance=i)
         sitl.download("copter", "3.3", verbose=False)
         sitl.launch([], await_ready=True, restart=True)
+        conn_str = sitl.connection_string()
         sitl_instances.append(sitl)
-        print(f"  SITL {i} running at {sitl.connection_string()}")
-        time.sleep(2)
+        connection_strings.append(conn_str)
+        print(f"  SITL {i} running at {conn_str}")
+        time.sleep(3)
 
     time.sleep(5)
 
-    config_copy = config.copy()
-    config_copy["sitl_instances"] = [
-        {"id": i, "port": port} for i, port in enumerate(ports)
-    ]
+    swarm = SwarmCoordinator(config)
 
-    swarm = SwarmCoordinator(config_copy)
-    swarm.connect_all()
+    # Connect directly using actual connection strings
+    from dronekit import connect
+    print(f"[SwarmCoordinator] Connecting to {len(connection_strings)} drones...")
+    for i, conn_str in enumerate(connection_strings):
+        print(f"  Connecting drone {i} on {conn_str}...")
+        try:
+            vehicle = connect(conn_str, wait_ready=True, timeout=60)
+            swarm.vehicles.append(vehicle)
+            print(f"  Drone {i} connected. Mode: {vehicle.mode.name}")
+        except Exception as e:
+            print(f"  Failed to connect drone {i}: {e}")
+
+    print(f"[SwarmCoordinator] {len(swarm.vehicles)} drones connected.")
 
     try:
         if not swarm.vehicles:
@@ -190,8 +198,6 @@ def run_swarm(config):
             except Exception:
                 pass
         print("[Main] All SITL instances stopped.")
-
-
 def run_dashboard(vehicle, config):
     from dashboard.app import create_app
 
@@ -221,6 +227,7 @@ def run_full_mission(vehicle, config):
         print("--- Phase 1: Takeoff ---")
         tl.arm_and_takeoff()
 
+        # Start monitor after airborne
         monitor = SafetyMonitor(vehicle, config)
         monitor.start()
 
