@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """
 AutonomAir — Main Entry Point
-
-Connects to ArduPilot SITL and presents a CLI menu to run
-each module independently or as a full mission sequence.
 """
 
 import json
 import os
-import sys
 import time
 
 # ------------------------------------------------------------------ #
@@ -79,6 +75,7 @@ def run_waypoint_mission(vehicle, config):
     tl = TakeoffLand(vehicle, config)
     monitor = None
     try:
+        # Must take off before uploading mission
         tl.arm_and_takeoff()
 
         monitor = SafetyMonitor(vehicle, config)
@@ -103,11 +100,46 @@ def run_waypoint_mission(vehicle, config):
             monitor.stop()
 
 
+def run_precision_land(vehicle, config):
+    from core.safety_monitor import SafetyMonitor
+    from core.takeoff_land import TakeoffLand
+    from vision.target_detector import TargetDetector
+    from vision.precision_land import PrecisionLand
+
+    tl = TakeoffLand(vehicle, config)
+    monitor = None
+    try:
+        # Step 1 — takeoff first
+        tl.arm_and_takeoff(target_altitude=15)
+
+        # Step 2 — start safety monitor after airborne
+        monitor = SafetyMonitor(vehicle, config)
+        monitor.start()
+
+        # Step 3 — start vision
+        print("[Main] Drone airborne. Starting vision targeting...")
+        print("[Main] Hold a GREEN object in front of your webcam.")
+        time.sleep(2)
+
+        detector = TargetDetector(config)
+        pl = PrecisionLand(vehicle, detector, config)
+        pl.run(camera_index=0, max_duration=300)
+
+    except Exception as e:
+        print(f"[Main] Error during precision landing: {e}")
+        try:
+            tl.land()
+        except Exception:
+            pass
+    finally:
+        if monitor:
+            monitor.stop()
+
+
 def run_swarm(config):
     from dronekit_sitl import SITL
     from swarm.swarm_coordinator import SwarmCoordinator
 
-    # Start 3 SITL instances automatically
     print("\n[Main] Starting 3 SITL instances for swarm...")
     sitl_instances = []
     ports = [14550, 14560, 14570]
@@ -121,9 +153,8 @@ def run_swarm(config):
         print(f"  SITL {i} running at {sitl.connection_string()}")
         time.sleep(2)
 
-    time.sleep(5)  # let all instances stabilise
+    time.sleep(5)
 
-    # Override config ports with actual connection strings
     config_copy = config.copy()
     config_copy["sitl_instances"] = [
         {"id": i, "port": port} for i, port in enumerate(ports)
@@ -171,10 +202,6 @@ def run_dashboard(vehicle, config):
 
 
 def run_full_mission(vehicle, config):
-    """
-    Full demonstration sequence — runs all modules back to back.
-    Best for portfolio demo recording.
-    """
     from core.safety_monitor import SafetyMonitor
     from core.takeoff_land import TakeoffLand
     from core.waypoint_mission import WaypointMission
