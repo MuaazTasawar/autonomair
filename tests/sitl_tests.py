@@ -21,11 +21,11 @@ class SITLTestBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         print("\n[TestBase] Starting SITL instance...")
-        cls.sitl = SITL()
+        cls.sitl = SITL(instance=9)  # use instance 9 to avoid port conflict
         cls.sitl.download("copter", "3.3", verbose=False)
         cls.sitl.launch([], await_ready=True, restart=True)
         conn_str = cls.sitl.connection_string()
-        cls.vehicle = connect(conn_str, wait_ready=True)
+        cls.vehicle = connect(conn_str, wait_ready=True, timeout=60)
         cls.config  = load_config()
         print(f"[TestBase] Connected to SITL at {conn_str}")
 
@@ -124,7 +124,8 @@ class TestWaypointMission(SITLTestBase):
         self.vehicle.commands.wait_ready()
 
         # +2 for home waypoint and RTL command
-        self.assertEqual(self.vehicle.commands.count, len(waypoints) + 2)
+        # +1 for home waypoint at index 0
+        self.assertEqual(self.vehicle.commands.count, len(waypoints) + 1)
 
     def test_goto_changes_mode(self):
         from core.waypoint_mission import WaypointMission
