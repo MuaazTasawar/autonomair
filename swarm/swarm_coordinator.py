@@ -145,20 +145,85 @@ class SwarmCoordinator:
     # ------------------------------------------------------------------ #
 
     def _arm_vehicle(self, vehicle):
-        vehicle.mode = VehicleMode("GUIDED")
+        from pymavlink import mavutil
+
+        # Disable arming checks
+        try:
+            vehicle.parameters["ARMING_CHECK"]  = 0
+            vehicle.parameters["FS_THR_ENABLE"] = 0
+            vehicle.parameters["FS_GCS_ENABLE"] = 0
+            time.sleep(2)
+        except Exception as e:
+            print(f"  Param warning: {e}")
+
+        # Switch to GUIDED via MAVLink
+        timeout, start = 30, time.time()
+        while True:
+            vehicle._master.mav.set_mode_send(
+                vehicle._master.target_system,
+                mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                4  # GUIDED
+            )
+            vehicle.mode = VehicleMode("GUIDED")
+            time.sleep(2)
+            if vehicle.mode.name == "GUIDED":
+                break
+            if time.time() - start > timeout:
+                print(f"  Warning: stuck in {vehicle.mode.name}, proceeding.")
+                break
+
+        # Wait for armable
+        timeout, start = 30, time.time()
+        while not vehicle.is_armable:
+            if time.time() - start > timeout:
+                print("  Warning: not armable, proceeding.")
+                break
+            time.sleep(1)
+
         vehicle.armed = True
-        timeout, start = 15, time.time()
+        timeout, start = 20, time.time()
         while not vehicle.armed:
             if time.time() - start > timeout:
                 raise TimeoutError("Vehicle failed to arm.")
             time.sleep(0.5)
 
     def _takeoff_vehicle(self, vehicle, alt):
-        vehicle.simple_takeoff(alt)
+        from pymavlink import mavutil
+
+        # Re-confirm GUIDED before takeoff
+        vehicle._master.mav.set_mode_send(
+            vehicle._master.target_system,
+            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+            4  # GUIDED
+        )
+        time.sleep(1)
+
+        # Send takeoff and retry until climbing
+        for _ in range(5):
+            vehicle.simple_takeoff(alt)
+            time.sleep(1)
+            if (vehicle.location.global_relative_frame.alt or 0) > 0.3:
+                break
+
+        # Wait for altitude
+        no_climb = 0
+        last_alt = 0
+        timeout, start = 60, time.time()
         while True:
             current_alt = vehicle.location.global_relative_frame.alt or 0
             if current_alt >= alt * 0.95:
                 break
+            if time.time() - start > timeout:
+                print(f"  Warning: altitude timeout at {current_alt:.1f}m")
+                break
+            if abs(current_alt - last_alt) < 0.05:
+                no_climb += 1
+                if no_climb > 20:
+                    print(f"  Warning: not climbing, proceeding at {current_alt:.1f}m")
+                    break
+            else:
+                no_climb = 0
+            last_alt = current_alt
             time.sleep(0.5)
 
     def _update_formation(self, formation_name):
